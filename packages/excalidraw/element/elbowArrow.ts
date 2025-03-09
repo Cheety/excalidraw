@@ -11,7 +11,7 @@ import {
   vectorScale,
   type GlobalPoint,
   type LocalPoint,
-} from "../../math";
+} from "@excalidraw/math";
 import BinaryHeap from "../binaryheap";
 import { getSizeFromPoints } from "../points";
 import { aabbForElement, pointInsideBounds } from "../shapes";
@@ -19,8 +19,6 @@ import { invariant, isAnyTrue, toBrandedType, tupleToCoors } from "../utils";
 import type { AppState } from "../types";
 import {
   bindPointToSnapToElementOutline,
-  distanceToBindableElement,
-  avoidRectangularCorner,
   FIXED_BINDING_DISTANCE,
   getHeadingForElbowArrowSnap,
   getGlobalFixedPointForBindableElement,
@@ -42,7 +40,7 @@ import {
   headingForPoint,
 } from "./heading";
 import { type ElementUpdate } from "./mutateElement";
-import { isBindableElement, isRectanguloidElement } from "./typeChecks";
+import { isBindableElement } from "./typeChecks";
 import {
   type ExcalidrawElbowArrowElement,
   type NonDeletedSceneElementsMap,
@@ -55,6 +53,7 @@ import type {
   FixedPointBinding,
   FixedSegment,
 } from "./types";
+import { distanceToBindableElement } from "./distance";
 
 type GridAddress = [number, number] & { _brand: "gridaddress" };
 
@@ -910,9 +909,11 @@ export const updateElbowArrowPoints = (
     arrow.y + (arrow?.points?.[arrow?.points?.length - 1]?.[1] ?? 0) > MAX_POS
   ) {
     console.error(
-      `Elbow arrow (or update) is outside reasonable bounds (> 1e6) arrow: ${JSON.stringify(
+      "Elbow arrow (or update) is outside reasonable bounds (> 1e6)",
+      {
         arrow,
-      )} updates: ${JSON.stringify(updates)}`,
+        updates,
+      },
     );
   }
   // @ts-ignore See above note
@@ -962,24 +963,6 @@ export const updateElbowArrowPoints = (
     );
   }
 
-  // 0. During all element replacement in the scene, we just need to renormalize
-  // the arrow
-  // TODO (dwelle,mtolmacs): Remove this once Scene.getScene() is removed
-  if (
-    elementsMap.size === 0 &&
-    updates.points &&
-    validateElbowPoints(updates.points)
-  ) {
-    return normalizeArrowElementUpdate(
-      updates.points.map((p) =>
-        pointFrom<GlobalPoint>(arrow.x + p[0], arrow.y + p[1]),
-      ),
-      arrow.fixedSegments,
-      arrow.startIsSpecial,
-      arrow.endIsSpecial,
-    );
-  }
-
   const updatedPoints: readonly LocalPoint[] = updates.points
     ? updates.points && updates.points.length === 2
       ? arrow.points.map((p, idx) =>
@@ -991,6 +974,34 @@ export const updateElbowArrowPoints = (
         )
       : updates.points.slice()
     : arrow.points.slice();
+
+  // 0. During all element replacement in the scene, we just need to renormalize
+  // the arrow
+  // TODO (dwelle,mtolmacs): Remove this once Scene.getScene() is removed
+  const startBinding =
+    typeof updates.startBinding !== "undefined"
+      ? updates.startBinding
+      : arrow.startBinding;
+  const endBinding =
+    typeof updates.endBinding !== "undefined"
+      ? updates.endBinding
+      : arrow.endBinding;
+  const startElement = startBinding && elementsMap.get(startBinding.elementId);
+  const endElement = endBinding && elementsMap.get(endBinding.elementId);
+  if (
+    (elementsMap.size === 0 && validateElbowPoints(updatedPoints)) ||
+    startElement?.id !== startBinding?.elementId ||
+    endElement?.id !== endBinding?.elementId
+  ) {
+    return normalizeArrowElementUpdate(
+      updatedPoints.map((p) =>
+        pointFrom<GlobalPoint>(arrow.x + p[0], arrow.y + p[1]),
+      ),
+      arrow.fixedSegments,
+      arrow.startIsSpecial,
+      arrow.endIsSpecial,
+    );
+  }
 
   const {
     startHeading,
@@ -1004,14 +1015,8 @@ export const updateElbowArrowPoints = (
     {
       x: arrow.x,
       y: arrow.y,
-      startBinding:
-        typeof updates.startBinding !== "undefined"
-          ? updates.startBinding
-          : arrow.startBinding,
-      endBinding:
-        typeof updates.endBinding !== "undefined"
-          ? updates.endBinding
-          : arrow.endBinding,
+      startBinding,
+      endBinding,
       startArrowhead: arrow.startArrowhead,
       endArrowhead: arrow.endArrowhead,
     },
@@ -1037,7 +1042,13 @@ export const updateElbowArrowPoints = (
   // Short circuit on no-op to avoid huge performance hit
   if (
     updates.startBinding === arrow.startBinding &&
-    updates.endBinding === arrow.endBinding
+    updates.endBinding === arrow.endBinding &&
+    (updates.points ?? []).every((p, i) =>
+      pointsEqual(
+        p,
+        arrow.points[i] ?? pointFrom<LocalPoint>(Infinity, Infinity),
+      ),
+    )
   ) {
     return {};
   }
@@ -1175,19 +1186,27 @@ const getElbowArrowData = (
       )
     : [startElement, endElement];
   const startGlobalPoint = getGlobalPoint(
+    {
+      ...arrow,
+      elbowed: true,
+      points: nextPoints,
+    } as ExcalidrawElbowArrowElement,
+    "start",
     arrow.startBinding?.fixedPoint,
     origStartGlobalPoint,
-    origEndGlobalPoint,
-    elementsMap,
     startElement,
     hoveredStartElement,
     options?.isDragging,
   );
   const endGlobalPoint = getGlobalPoint(
+    {
+      ...arrow,
+      elbowed: true,
+      points: nextPoints,
+    } as ExcalidrawElbowArrowElement,
+    "end",
     arrow.endBinding?.fixedPoint,
     origEndGlobalPoint,
-    origStartGlobalPoint,
-    elementsMap,
     endElement,
     hoveredEndElement,
     options?.isDragging,
@@ -2025,7 +2044,6 @@ const normalizeArrowElementUpdate = (
 } => {
   const offsetX = global[0][0];
   const offsetY = global[0][1];
-
   let points = global.map((p) =>
     pointTranslate<GlobalPoint, LocalPoint>(
       p,
@@ -2046,14 +2064,13 @@ const normalizeArrowElementUpdate = (
     offsetY + points[points.length - 1][1] > MAX_POS
   ) {
     console.error(
-      `Elbow arrow normalization is outside reasonable bounds (> 1e6) arrow: ${JSON.stringify(
-        {
-          x: offsetX,
-          y: offsetY,
-          points,
-          ...getSizeFromPoints(points),
-        },
-      )}`,
+      "Elbow arrow normalization is outside reasonable bounds (> 1e6)",
+      {
+        x: offsetX,
+        y: offsetY,
+        points,
+        ...getSizeFromPoints(points),
+      },
     );
   }
 
@@ -2132,21 +2149,20 @@ const neighborIndexToHeading = (idx: number): Heading => {
 };
 
 const getGlobalPoint = (
+  arrow: ExcalidrawElbowArrowElement,
+  startOrEnd: "start" | "end",
   fixedPointRatio: [number, number] | undefined | null,
   initialPoint: GlobalPoint,
-  otherPoint: GlobalPoint,
-  elementsMap: NonDeletedSceneElementsMap | SceneElementsMap,
   boundElement?: ExcalidrawBindableElement | null,
   hoveredElement?: ExcalidrawBindableElement | null,
   isDragging?: boolean,
 ): GlobalPoint => {
   if (isDragging) {
     if (hoveredElement) {
-      const snapPoint = getSnapPoint(
-        initialPoint,
-        otherPoint,
+      const snapPoint = bindPointToSnapToElementOutline(
+        arrow,
         hoveredElement,
-        elementsMap,
+        startOrEnd,
       );
 
       return snapToMid(hoveredElement, snapPoint);
@@ -2163,28 +2179,15 @@ const getGlobalPoint = (
 
     // NOTE: Resize scales the binding position point too, so we need to update it
     return Math.abs(
-      distanceToBindableElement(boundElement, fixedGlobalPoint, elementsMap) -
+      distanceToBindableElement(boundElement, fixedGlobalPoint) -
         FIXED_BINDING_DISTANCE,
     ) > 0.01
-      ? getSnapPoint(initialPoint, otherPoint, boundElement, elementsMap)
+      ? bindPointToSnapToElementOutline(arrow, boundElement, startOrEnd)
       : fixedGlobalPoint;
   }
 
   return initialPoint;
 };
-
-const getSnapPoint = (
-  p: GlobalPoint,
-  otherPoint: GlobalPoint,
-  element: ExcalidrawBindableElement,
-  elementsMap: ElementsMap,
-) =>
-  bindPointToSnapToElementOutline(
-    isRectanguloidElement(element) ? avoidRectangularCorner(element, p) : p,
-    otherPoint,
-    element,
-    elementsMap,
-  );
 
 const getBindPointHeading = (
   p: GlobalPoint,
@@ -2200,9 +2203,12 @@ const getBindPointHeading = (
     hoveredElement &&
       aabbForElement(
         hoveredElement,
-        Array(4).fill(
-          distanceToBindableElement(hoveredElement, p, elementsMap),
-        ) as [number, number, number, number],
+        Array(4).fill(distanceToBindableElement(hoveredElement, p)) as [
+          number,
+          number,
+          number,
+          number,
+        ],
       ),
     elementsMap,
     origPoint,
@@ -2243,7 +2249,7 @@ const getHoveredElements = (
 const gridAddressesEqual = (a: GridAddress, b: GridAddress): boolean =>
   a[0] === b[0] && a[1] === b[1];
 
-const validateElbowPoints = <P extends GlobalPoint | LocalPoint>(
+export const validateElbowPoints = <P extends GlobalPoint | LocalPoint>(
   points: readonly P[],
   tolerance: number = DEDUP_TRESHOLD,
 ) =>
