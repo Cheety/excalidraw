@@ -1,5 +1,9 @@
 import clsx from "clsx";
 
+import { CaptureUpdateAction } from "@excalidraw/element";
+
+import { invariant } from "@excalidraw/common";
+
 import { getClientColor } from "../clients";
 import { Avatar } from "../components/Avatar";
 import {
@@ -8,19 +12,23 @@ import {
   microphoneMutedIcon,
 } from "../components/icons";
 import { t } from "../i18n";
-import { CaptureUpdateAction } from "../store";
 
 import { register } from "./register";
 
 import type { GoToCollaboratorComponentProps } from "../components/UserList";
 import type { Collaborator } from "../types";
 
-export const actionGoToCollaborator = register({
+export const actionGoToCollaborator = register<Collaborator>({
   name: "goToCollaborator",
   label: "Go to a collaborator",
   viewMode: true,
   trackEvent: { category: "collab" },
-  perform: (_elements, appState, collaborator: Collaborator) => {
+  perform: (_elements, appState, collaborator) => {
+    invariant(
+      collaborator,
+      "actionGoToCollaborator: collaborator should be defined when actionGoToCollaborator is called",
+    );
+
     if (
       !collaborator.socketId ||
       appState.userToFollow?.socketId === collaborator.socketId ||

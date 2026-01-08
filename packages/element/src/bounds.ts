@@ -1,19 +1,28 @@
 import rough from "roughjs/bin/rough";
 
-import { rescalePoints, arrayToMap, invariant } from "@excalidraw/common";
+import {
+  arrayToMap,
+  type Bounds,
+  invariant,
+  rescalePoints,
+  sizeOf,
+} from "@excalidraw/common";
 
 import {
   degreesToRadians,
   lineSegment,
-  pointFrom,
   pointDistance,
+  pointFrom,
   pointFromArray,
   pointRotateRads,
 } from "@excalidraw/math";
 
 import { getCurvePathOps } from "@excalidraw/utils/shape";
 
+import { pointsOnBezierCurves } from "points-on-curve";
+
 import type {
+  Curve,
   Degrees,
   GlobalPoint,
   LineSegment,
@@ -25,8 +34,8 @@ import type { AppState } from "@excalidraw/excalidraw/types";
 
 import type { Mutable } from "@excalidraw/common/utility-types";
 
-import { ShapeCache } from "./ShapeCache";
-import { generateRoughOptions } from "./Shape";
+import { generateRoughOptions } from "./shape";
+import { ShapeCache } from "./shape";
 import { LinearElementEditor } from "./linearElementEditor";
 import { getBoundTextElement, getContainerElement } from "./textElement";
 import {
@@ -34,20 +43,31 @@ import {
   isBoundToContainer,
   isFreeDrawElement,
   isLinearElement,
+  isLineElement,
   isTextElement,
 } from "./typeChecks";
 
-import type {
-  ExcalidrawElement,
-  ExcalidrawLinearElement,
-  Arrowhead,
-  ExcalidrawFreeDrawElement,
-  NonDeleted,
-  ExcalidrawTextElementWithContainer,
-  ElementsMap,
-} from "./types";
+import { getElementShape } from "./shape";
+
+import {
+  deconstructDiamondElement,
+  deconstructRectanguloidElement,
+} from "./utils";
+
 import type { Drawable, Op } from "roughjs/bin/core";
 import type { Point as RoughPoint } from "roughjs/bin/geometry";
+import type {
+  Arrowhead,
+  ElementsMap,
+  ElementsMapOrArray,
+  ExcalidrawElement,
+  ExcalidrawEllipseElement,
+  ExcalidrawFreeDrawElement,
+  ExcalidrawLinearElement,
+  ExcalidrawRectanguloidElement,
+  ExcalidrawTextElementWithContainer,
+  NonDeleted,
+} from "./types";
 
 export type RectangleBox = {
   x: number;
@@ -58,16 +78,6 @@ export type RectangleBox = {
 };
 
 type MaybeQuadraticSolution = [number | null, number | null] | false;
-
-/**
- * x and y position of top left corner, x and y position of bottom right corner
- */
-export type Bounds = readonly [
-  minX: number,
-  minY: number,
-  maxX: number,
-  maxY: number,
-];
 
 export type SceneBounds = readonly [
   sceneX: number,
@@ -84,9 +94,23 @@ export class ElementBounds {
       version: ExcalidrawElement["version"];
     }
   >();
+  private static nonRotatedBoundsCache = new WeakMap<
+    ExcalidrawElement,
+    {
+      bounds: Bounds;
+      version: ExcalidrawElement["version"];
+    }
+  >();
 
-  static getBounds(element: ExcalidrawElement, elementsMap: ElementsMap) {
-    const cachedBounds = ElementBounds.boundsCache.get(element);
+  static getBounds(
+    element: ExcalidrawElement,
+    elementsMap: ElementsMap,
+    nonRotated: boolean = false,
+  ) {
+    const cachedBounds =
+      nonRotated && element.angle !== 0
+        ? ElementBounds.nonRotatedBoundsCache.get(element)
+        : ElementBounds.boundsCache.get(element);
 
     if (
       cachedBounds?.version &&
@@ -97,6 +121,23 @@ export class ElementBounds {
     ) {
       return cachedBounds.bounds;
     }
+
+    if (nonRotated && element.angle !== 0) {
+      const nonRotatedBounds = ElementBounds.calculateBounds(
+        {
+          ...element,
+          angle: 0 as Radians,
+        },
+        elementsMap,
+      );
+      ElementBounds.nonRotatedBoundsCache.set(element, {
+        version: element.version,
+        bounds: nonRotatedBounds,
+      });
+
+      return nonRotatedBounds;
+    }
+
     const bounds = ElementBounds.calculateBounds(element, elementsMap);
 
     ElementBounds.boundsCache.set(element, {
@@ -254,50 +295,105 @@ export const getElementAbsoluteCoords = (
  * that can be used for visual collision detection (useful for frames)
  * as opposed to bounding box collision detection
  */
+/**
+ * Given an element, return the line segments that make up the element.
+ *
+ * Uses helpers from /math
+ */
 export const getElementLineSegments = (
   element: ExcalidrawElement,
   elementsMap: ElementsMap,
 ): LineSegment<GlobalPoint>[] => {
+  const shape = getElementShape(element, elementsMap);
   const [x1, y1, x2, y2, cx, cy] = getElementAbsoluteCoords(
     element,
     elementsMap,
   );
+  const center = pointFrom<GlobalPoint>(cx, cy);
 
-  const center: GlobalPoint = pointFrom(cx, cy);
+  if (shape.type === "polycurve") {
+    const curves = shape.data;
+    const pointsOnCurves = curves.map((curve) =>
+      pointsOnBezierCurves(curve, 10),
+    );
 
-  if (isLinearElement(element) || isFreeDrawElement(element)) {
     const segments: LineSegment<GlobalPoint>[] = [];
 
-    let i = 0;
+    if (
+      (isLineElement(element) && !element.polygon) ||
+      isArrowElement(element)
+    ) {
+      for (const points of pointsOnCurves) {
+        let i = 0;
 
-    while (i < element.points.length - 1) {
-      segments.push(
-        lineSegment(
-          pointRotateRads(
-            pointFrom(
-              element.points[i][0] + element.x,
-              element.points[i][1] + element.y,
+        while (i < points.length - 1) {
+          segments.push(
+            lineSegment(
+              pointFrom(points[i][0], points[i][1]),
+              pointFrom(points[i + 1][0], points[i + 1][1]),
             ),
-            center,
-            element.angle,
+          );
+          i++;
+        }
+      }
+    } else {
+      const points = pointsOnCurves.flat();
+      let i = 0;
+
+      while (i < points.length - 1) {
+        segments.push(
+          lineSegment(
+            pointFrom(points[i][0], points[i][1]),
+            pointFrom(points[i + 1][0], points[i + 1][1]),
           ),
-          pointRotateRads(
-            pointFrom(
-              element.points[i + 1][0] + element.x,
-              element.points[i + 1][1] + element.y,
-            ),
-            center,
-            element.angle,
-          ),
-        ),
-      );
-      i++;
+        );
+        i++;
+      }
     }
 
     return segments;
+  } else if (shape.type === "polyline") {
+    return shape.data as LineSegment<GlobalPoint>[];
+  } else if (_isRectanguloidElement(element)) {
+    const [sides, corners] = deconstructRectanguloidElement(element);
+    const cornerSegments: LineSegment<GlobalPoint>[] = corners
+      .map((corner) => getSegmentsOnCurve(corner, center, element.angle))
+      .flat();
+    const rotatedSides = getRotatedSides(sides, center, element.angle);
+    return [...rotatedSides, ...cornerSegments];
+  } else if (element.type === "diamond") {
+    const [sides, corners] = deconstructDiamondElement(element);
+    const cornerSegments = corners
+      .map((corner) => getSegmentsOnCurve(corner, center, element.angle))
+      .flat();
+    const rotatedSides = getRotatedSides(sides, center, element.angle);
+
+    return [...rotatedSides, ...cornerSegments];
+  } else if (shape.type === "polygon") {
+    if (isTextElement(element)) {
+      const container = getContainerElement(element, elementsMap);
+      if (container && isLinearElement(container)) {
+        const segments: LineSegment<GlobalPoint>[] = [
+          lineSegment(pointFrom(x1, y1), pointFrom(x2, y1)),
+          lineSegment(pointFrom(x2, y1), pointFrom(x2, y2)),
+          lineSegment(pointFrom(x2, y2), pointFrom(x1, y2)),
+          lineSegment(pointFrom(x1, y2), pointFrom(x1, y1)),
+        ];
+        return segments;
+      }
+    }
+
+    const points = shape.data as GlobalPoint[];
+    const segments: LineSegment<GlobalPoint>[] = [];
+    for (let i = 0; i < points.length - 1; i++) {
+      segments.push(lineSegment(points[i], points[i + 1]));
+    }
+    return segments;
+  } else if (shape.type === "ellipse") {
+    return getSegmentsOnEllipse(element as ExcalidrawEllipseElement);
   }
 
-  const [nw, ne, sw, se, n, s, w, e] = (
+  const [nw, ne, sw, se, , , w, e] = (
     [
       [x1, y1],
       [x2, y1],
@@ -310,28 +406,6 @@ export const getElementLineSegments = (
     ] as GlobalPoint[]
   ).map((point) => pointRotateRads(point, center, element.angle));
 
-  if (element.type === "diamond") {
-    return [
-      lineSegment(n, w),
-      lineSegment(n, e),
-      lineSegment(s, w),
-      lineSegment(s, e),
-    ];
-  }
-
-  if (element.type === "ellipse") {
-    return [
-      lineSegment(n, w),
-      lineSegment(n, e),
-      lineSegment(s, w),
-      lineSegment(s, e),
-      lineSegment(n, w),
-      lineSegment(n, e),
-      lineSegment(s, w),
-      lineSegment(s, e),
-    ];
-  }
-
   return [
     lineSegment(nw, ne),
     lineSegment(sw, se),
@@ -342,6 +416,94 @@ export const getElementLineSegments = (
     lineSegment(ne, w),
     lineSegment(se, w),
   ];
+};
+
+const _isRectanguloidElement = (
+  element: ExcalidrawElement,
+): element is ExcalidrawRectanguloidElement => {
+  return (
+    element != null &&
+    (element.type === "rectangle" ||
+      element.type === "image" ||
+      element.type === "iframe" ||
+      element.type === "embeddable" ||
+      element.type === "frame" ||
+      element.type === "magicframe" ||
+      (element.type === "text" && !element.containerId))
+  );
+};
+
+const getRotatedSides = (
+  sides: LineSegment<GlobalPoint>[],
+  center: GlobalPoint,
+  angle: Radians,
+) => {
+  return sides.map((side) => {
+    return lineSegment(
+      pointRotateRads<GlobalPoint>(side[0], center, angle),
+      pointRotateRads<GlobalPoint>(side[1], center, angle),
+    );
+  });
+};
+
+const getSegmentsOnCurve = (
+  curve: Curve<GlobalPoint>,
+  center: GlobalPoint,
+  angle: Radians,
+): LineSegment<GlobalPoint>[] => {
+  const points = pointsOnBezierCurves(curve, 10);
+  let i = 0;
+  const segments: LineSegment<GlobalPoint>[] = [];
+  while (i < points.length - 1) {
+    segments.push(
+      lineSegment(
+        pointRotateRads<GlobalPoint>(
+          pointFrom(points[i][0], points[i][1]),
+          center,
+          angle,
+        ),
+        pointRotateRads<GlobalPoint>(
+          pointFrom(points[i + 1][0], points[i + 1][1]),
+          center,
+          angle,
+        ),
+      ),
+    );
+    i++;
+  }
+
+  return segments;
+};
+
+const getSegmentsOnEllipse = (
+  ellipse: ExcalidrawEllipseElement,
+): LineSegment<GlobalPoint>[] => {
+  const center = pointFrom<GlobalPoint>(
+    ellipse.x + ellipse.width / 2,
+    ellipse.y + ellipse.height / 2,
+  );
+
+  const a = ellipse.width / 2;
+  const b = ellipse.height / 2;
+
+  const segments: LineSegment<GlobalPoint>[] = [];
+  const points: GlobalPoint[] = [];
+  const n = 90;
+  const deltaT = (Math.PI * 2) / n;
+
+  for (let i = 0; i < n; i++) {
+    const t = i * deltaT;
+    const x = center[0] + a * Math.cos(t);
+    const y = center[1] + b * Math.sin(t);
+    points.push(pointRotateRads(pointFrom(x, y), center, ellipse.angle));
+  }
+
+  for (let i = 0; i < points.length - 1; i++) {
+    segments.push(lineSegment(points[i], points[i + 1]));
+  }
+
+  segments.push(lineSegment(points[points.length - 1], points[0]));
+  return segments;
 };
 
 /**
@@ -437,7 +599,7 @@ const solveQuadratic = (
   return [s1, s2];
 };
 
-const getCubicBezierCurveBound = (
+export const getCubicBezierCurveBound = (
   p0: GlobalPoint,
   p1: GlobalPoint,
   p2: GlobalPoint,
@@ -735,6 +897,7 @@ export const getArrowheadPoints = (
   return [x2, y2, x3, y3, x4, y4];
 };
 
+// TODO reuse shape.ts
 const generateLinearElementShape = (
   element: ExcalidrawLinearElement,
 ): Drawable => {
@@ -792,7 +955,7 @@ const getLinearElementRotatedBounds = (
   }
 
   // first element is always the curve
-  const cachedShape = ShapeCache.get(element)?.[0];
+  const cachedShape = ShapeCache.get(element, null)?.[0];
   const shape = cachedShape ?? generateLinearElementShape(element);
   const ops = getCurvePathOps(shape);
   const transformXY = ([x, y]: GlobalPoint) =>
@@ -823,15 +986,16 @@ const getLinearElementRotatedBounds = (
 export const getElementBounds = (
   element: ExcalidrawElement,
   elementsMap: ElementsMap,
+  nonRotated: boolean = false,
 ): Bounds => {
-  return ElementBounds.getBounds(element, elementsMap);
+  return ElementBounds.getBounds(element, elementsMap, nonRotated);
 };
 
 export const getCommonBounds = (
-  elements: readonly ExcalidrawElement[],
+  elements: ElementsMapOrArray,
   elementsMap?: ElementsMap,
 ): Bounds => {
-  if (!elements.length) {
+  if (!sizeOf(elements)) {
     return [0, 0, 0, 0];
   }
 
@@ -978,7 +1142,9 @@ export interface BoundingBox {
 }
 
 export const getCommonBoundingBox = (
-  elements: ExcalidrawElement[] | readonly NonDeleted<ExcalidrawElement>[],
+  elements:
+    | readonly ExcalidrawElement[]
+    | readonly NonDeleted<ExcalidrawElement>[],
 ): BoundingBox => {
   const [minX, minY, maxX, maxY] = getCommonBounds(elements);
   return {
@@ -1017,6 +1183,71 @@ export const getCenterForBounds = (bounds: Bounds): GlobalPoint =>
     bounds[1] + (bounds[3] - bounds[1]) / 2,
   );
 
+/**
+ * Get the axis-aligned bounding box for a given element
+ */
+export const aabbForElement = (
+  element: Readonly<ExcalidrawElement>,
+  elementsMap: ElementsMap,
+  offset?: [number, number, number, number],
+) => {
+  const bbox = {
+    minX: element.x,
+    minY: element.y,
+    maxX: element.x + element.width,
+    maxY: element.y + element.height,
+    midX: element.x + element.width / 2,
+    midY: element.y + element.height / 2,
+  };
+
+  const center = elementCenterPoint(element, elementsMap);
+  const [topLeftX, topLeftY] = pointRotateRads(
+    pointFrom(bbox.minX, bbox.minY),
+    center,
+    element.angle,
+  );
+  const [topRightX, topRightY] = pointRotateRads(
+    pointFrom(bbox.maxX, bbox.minY),
+    center,
+    element.angle,
+  );
+  const [bottomRightX, bottomRightY] = pointRotateRads(
+    pointFrom(bbox.maxX, bbox.maxY),
+    center,
+    element.angle,
+  );
+  const [bottomLeftX, bottomLeftY] = pointRotateRads(
+    pointFrom(bbox.minX, bbox.maxY),
+    center,
+    element.angle,
+  );
+
+  const bounds = [
+    Math.min(topLeftX, topRightX, bottomRightX, bottomLeftX),
+    Math.min(topLeftY, topRightY, bottomRightY, bottomLeftY),
+    Math.max(topLeftX, topRightX, bottomRightX, bottomLeftX),
+    Math.max(topLeftY, topRightY, bottomRightY, bottomLeftY),
+  ] as Bounds;
+
+  if (offset) {
+    const [topOffset, rightOffset, downOffset, leftOffset] = offset;
+    return [
+      bounds[0] - leftOffset,
+      bounds[1] - topOffset,
+      bounds[2] + rightOffset,
+      bounds[3] + downOffset,
+    ] as Bounds;
+  }
+
+  return bounds;
+};
+
+export const pointInsideBounds = <P extends GlobalPoint | LocalPoint>(
+  p: P,
+  bounds: Bounds,
+): boolean =>
+  p[0] > bounds[0] && p[0] < bounds[2] && p[1] > bounds[1] && p[1] < bounds[3];
+
 export const doBoundsIntersect = (
   bounds1: Bounds | null,
   bounds2: Bounds | null,
@@ -1029,4 +1260,22 @@ export const doBoundsIntersect = (
   const [minX2, minY2, maxX2, maxY2] = bounds2;
 
   return minX1 < maxX2 && maxX1 > minX2 && minY1 < maxY2 && maxY1 > minY2;
+};
+
+export const elementCenterPoint = (
+  element: ExcalidrawElement,
+  elementsMap: ElementsMap,
+  xOffset: number = 0,
+  yOffset: number = 0,
+) => {
+  if (isLinearElement(element)) {
+    const [x1, y1, x2, y2] = getElementAbsoluteCoords(element, elementsMap);
+    const [x, y] = pointFrom<GlobalPoint>((x1 + x2) / 2, (y1 + y2) / 2);
+
+    return pointFrom<GlobalPoint>(x + xOffset, y + yOffset);
+  }
+
+  const [x, y] = getCenterForBounds(getElementBounds(element, elementsMap));
+
+  return pointFrom<GlobalPoint>(x + xOffset, y + yOffset);
 };

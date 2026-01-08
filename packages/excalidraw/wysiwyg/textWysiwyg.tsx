@@ -3,19 +3,22 @@ import {
   KEYS,
   CLASSES,
   POINTER_BUTTON,
+  THEME,
   isWritableElement,
   getFontString,
   getFontFamilyString,
   isTestEnv,
+  MIME_TYPES,
+  applyDarkModeFilter,
 } from "@excalidraw/common";
 
 import {
   originalContainerCache,
   updateOriginalContainerCache,
-} from "@excalidraw/element/containerCache";
+} from "@excalidraw/element";
 
-import { LinearElementEditor } from "@excalidraw/element/linearElementEditor";
-import { bumpVersion, mutateElement } from "@excalidraw/element/mutateElement";
+import { LinearElementEditor } from "@excalidraw/element";
+import { bumpVersion } from "@excalidraw/element";
 import {
   getBoundTextElementId,
   getContainerElement,
@@ -26,15 +29,15 @@ import {
   computeContainerDimensionForBoundText,
   computeBoundTextPosition,
   getBoundTextElement,
-} from "@excalidraw/element/textElement";
-import { getTextWidth } from "@excalidraw/element/textMeasurements";
-import { normalizeText } from "@excalidraw/element/textMeasurements";
-import { wrapText } from "@excalidraw/element/textWrapping";
+} from "@excalidraw/element";
+import { getTextWidth } from "@excalidraw/element";
+import { normalizeText } from "@excalidraw/element";
+import { wrapText } from "@excalidraw/element";
 import {
   isArrowElement,
   isBoundToContainer,
   isTextElement,
-} from "@excalidraw/element/typeChecks";
+} from "@excalidraw/element";
 
 import type {
   ExcalidrawElement,
@@ -45,8 +48,7 @@ import type {
 
 import { actionSaveToActiveFile } from "../actions";
 
-import Scene from "../scene/Scene";
-import { parseClipboard } from "../clipboard";
+import { parseDataTransferEvent } from "../clipboard";
 import {
   actionDecreaseFontSize,
   actionIncreaseFontSize,
@@ -81,6 +83,8 @@ const getTransform = (
   return `translate(${translateX}px, ${translateY}px) scale(${zoom.value}) rotate(${degree}deg)`;
 };
 
+type SubmitHandler = () => void;
+
 export const textWysiwyg = ({
   id,
   onChange,
@@ -107,7 +111,7 @@ export const textWysiwyg = ({
   excalidrawContainer: HTMLDivElement | null;
   app: App;
   autoSelect?: boolean;
-}) => {
+}): SubmitHandler => {
   const textPropertiesUpdated = (
     updatedTextElement: ExcalidrawTextElement,
     editable: HTMLTextAreaElement,
@@ -128,10 +132,13 @@ export const textWysiwyg = ({
     return false;
   };
 
+  let LAST_THEME = app.state.theme;
+
   const updateWysiwygStyle = () => {
+    LAST_THEME = app.state.theme;
+
     const appState = app.state;
-    const updatedTextElement =
-      Scene.getScene(element)?.getElement<ExcalidrawTextElement>(id);
+    const updatedTextElement = app.scene.getElement<ExcalidrawTextElement>(id);
 
     if (!updatedTextElement) {
       return;
@@ -188,7 +195,6 @@ export const textWysiwyg = ({
         }
 
         maxWidth = getBoundTextMaxWidth(container, updatedTextElement);
-
         maxHeight = getBoundTextMaxHeight(
           container,
           updatedTextElement as ExcalidrawTextElementWithContainer,
@@ -201,7 +207,7 @@ export const textWysiwyg = ({
             container.type,
           );
 
-          mutateElement(container, { height: targetContainerHeight });
+          app.scene.mutateElement(container, { height: targetContainerHeight });
           return;
         } else if (
           // autoshrink container height until original container height
@@ -214,33 +220,18 @@ export const textWysiwyg = ({
             height,
             container.type,
           );
-          mutateElement(container, { height: targetContainerHeight });
+          app.scene.mutateElement(container, { height: targetContainerHeight });
         } else {
-          const { y } = computeBoundTextPosition(
+          const { x, y } = computeBoundTextPosition(
             container,
             updatedTextElement as ExcalidrawTextElementWithContainer,
             elementsMap,
           );
+          coordX = x;
           coordY = y;
         }
       }
       const [viewportX, viewportY] = getViewportCoords(coordX, coordY);
-      const initialSelectionStart = editable.selectionStart;
-      const initialSelectionEnd = editable.selectionEnd;
-      const initialLength = editable.value.length;
-
-      // restore cursor position after value updated so it doesn't
-      // go to the end of text when container auto expanded
-      if (
-        initialSelectionStart === initialSelectionEnd &&
-        initialSelectionEnd !== initialLength
-      ) {
-        // get diff between length and selection end and shift
-        // the cursor by "diff" times to position correctly
-        const diff = initialLength - initialSelectionEnd;
-        editable.selectionStart = editable.value.length - diff;
-        editable.selectionEnd = editable.value.length - diff;
-      }
 
       if (!container) {
         maxWidth = (appState.width - 8 - viewportX) / appState.zoom.value;
@@ -275,9 +266,11 @@ export const textWysiwyg = ({
         ),
         textAlign,
         verticalAlign,
-        color: updatedTextElement.strokeColor,
+        color:
+          appState.theme === THEME.DARK
+            ? applyDarkModeFilter(updatedTextElement.strokeColor)
+            : updatedTextElement.strokeColor,
         opacity: updatedTextElement.opacity / 100,
-        filter: "var(--theme-filter)",
         maxHeight: `${editorMaxHeight}px`,
       });
       editable.scrollTop = 0;
@@ -287,7 +280,7 @@ export const textWysiwyg = ({
         editable.style.fontFamily = getFontFamilyString(updatedTextElement);
       }
 
-      mutateElement(updatedTextElement, { x: coordX, y: coordY });
+      app.scene.mutateElement(updatedTextElement, { x: coordX, y: coordY });
     }
   };
 
@@ -332,12 +325,14 @@ export const textWysiwyg = ({
 
   if (onChange) {
     editable.onpaste = async (event) => {
-      const clipboardData = await parseClipboard(event, true);
-      if (!clipboardData.text) {
+      const textItem = (await parseDataTransferEvent(event)).findByType(
+        MIME_TYPES.text,
+      );
+      if (!textItem) {
         return;
       }
-      const data = normalizeText(clipboardData.text);
-      if (!data) {
+      const text = normalizeText(textItem.value);
+      if (!text) {
         return;
       }
       const container = getContainerElement(
@@ -355,7 +350,7 @@ export const textWysiwyg = ({
           app.scene.getNonDeletedElementsMap(),
         );
         const wrappedText = wrapText(
-          `${editable.value}${data}`,
+          `${editable.value}${text}`,
           font,
           getBoundTextMaxWidth(container, boundTextElement),
         );
@@ -539,12 +534,13 @@ export const textWysiwyg = ({
     if (isDestroyed) {
       return;
     }
+
     isDestroyed = true;
     // cleanup must be run before onSubmit otherwise when app blurs the wysiwyg
     // it'd get stuck in an infinite loop of blur→onSubmit after we re-focus the
     // wysiwyg on update
     cleanup();
-    const updateElement = Scene.getScene(element)?.getElement(
+    const updateElement = app.scene.getElement(
       element.id,
     ) as ExcalidrawTextElement;
     if (!updateElement) {
@@ -559,7 +555,7 @@ export const textWysiwyg = ({
       if (editable.value.trim()) {
         const boundTextElementId = getBoundTextElementId(container);
         if (!boundTextElementId || boundTextElementId !== element.id) {
-          mutateElement(container, {
+          app.scene.mutateElement(container, {
             boundElements: (container.boundElements || []).concat({
               type: "text",
               id: element.id,
@@ -570,7 +566,7 @@ export const textWysiwyg = ({
           bumpVersion(container);
         }
       } else {
-        mutateElement(container, {
+        app.scene.mutateElement(container, {
           boundElements: container.boundElements?.filter(
             (ele) =>
               !isTextElement(
@@ -579,11 +575,8 @@ export const textWysiwyg = ({
           ),
         });
       }
-      redrawTextBoundingBox(
-        updateElement,
-        container,
-        app.scene.getNonDeletedElementsMap(),
-      );
+
+      redrawTextBoundingBox(updateElement, container, app.scene);
     }
 
     onSubmit({
@@ -609,6 +602,7 @@ export const textWysiwyg = ({
     window.removeEventListener("blur", handleSubmit);
     window.removeEventListener("beforeunload", handleSubmit);
     unbindUpdate();
+    unsubOnChange();
     unbindOnScroll();
 
     editable.remove();
@@ -625,14 +619,24 @@ export const textWysiwyg = ({
     const isPropertiesTrigger =
       target instanceof HTMLElement &&
       target.classList.contains("properties-trigger");
+    const isPropertiesContent =
+      (target instanceof HTMLElement || target instanceof SVGElement) &&
+      !!(target as Element).closest(".properties-content");
+    const inShapeActionsMenu =
+      (target instanceof HTMLElement || target instanceof SVGElement) &&
+      (!!(target as Element).closest(`.${CLASSES.SHAPE_ACTIONS_MENU}`) ||
+        !!(target as Element).closest(".compact-shape-actions-island"));
 
     setTimeout(() => {
-      editable.onblur = handleSubmit;
-
-      // case: clicking on the same property → no change → no update → no focus
-      if (!isPropertiesTrigger) {
-        editable.focus();
+      // If we interacted within shape actions menu or its popovers/triggers,
+      // keep submit disabled and don't steal focus back to textarea.
+      if (inShapeActionsMenu || isPropertiesTrigger || isPropertiesContent) {
+        return;
       }
+
+      // Otherwise, re-enable submit on blur and refocus the editor.
+      editable.onblur = handleSubmit;
+      editable.focus();
     });
   };
 
@@ -655,6 +659,7 @@ export const textWysiwyg = ({
         event.preventDefault();
         app.handleCanvasPanUsingWheelOrSpaceDrag(event);
       }
+
       temporarilyDisableSubmit();
       return;
     }
@@ -662,15 +667,20 @@ export const textWysiwyg = ({
     const isPropertiesTrigger =
       target instanceof HTMLElement &&
       target.classList.contains("properties-trigger");
+    const isPropertiesContent =
+      (target instanceof HTMLElement || target instanceof SVGElement) &&
+      !!(target as Element).closest(".properties-content");
 
     if (
       ((event.target instanceof HTMLElement ||
         event.target instanceof SVGElement) &&
-        event.target.closest(
+        (event.target.closest(
           `.${CLASSES.SHAPE_ACTIONS_MENU}, .${CLASSES.ZOOM_ACTIONS}`,
-        ) &&
+        ) ||
+          event.target.closest(".compact-shape-actions-island")) &&
         !isWritableElement(event.target)) ||
-      isPropertiesTrigger
+      isPropertiesTrigger ||
+      isPropertiesContent
     ) {
       temporarilyDisableSubmit();
     } else if (
@@ -690,6 +700,13 @@ export const textWysiwyg = ({
       });
     }
   };
+
+  // FIXME after we start emitting updates from Store for appState.theme
+  const unsubOnChange = app.onChangeEmitter.on((elements) => {
+    if (app.state.theme !== LAST_THEME) {
+      updateWysiwygStyle();
+    }
+  });
 
   // handle updates of textElement properties of editing element
   const unbindUpdate = app.scene.onUpdate(() => {
@@ -740,4 +757,6 @@ export const textWysiwyg = ({
   excalidrawContainer
     ?.querySelector(".excalidraw-textEditorContainer")!
     .appendChild(editable);
+
+  return handleSubmit;
 };

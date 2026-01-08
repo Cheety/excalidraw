@@ -6,7 +6,11 @@ import {
   TEXT_ALIGN,
   VERTICAL_ALIGN,
   getFontString,
+  isProdEnv,
+  invariant,
 } from "@excalidraw/common";
+
+import { pointFrom, pointRotateRads, type Radians } from "@excalidraw/math";
 
 import type { AppState } from "@excalidraw/excalidraw/types";
 
@@ -17,7 +21,7 @@ import {
   updateOriginalContainerCache,
 } from "./containerCache";
 import { LinearElementEditor } from "./linearElementEditor";
-import { mutateElement } from "./mutateElement";
+
 import { measureText } from "./textMeasurements";
 import { wrapText } from "./textWrapping";
 import {
@@ -25,6 +29,8 @@ import {
   isArrowElement,
   isTextElement,
 } from "./typeChecks";
+
+import type { Scene } from "./Scene";
 
 import type { MaybeTransformHandleType } from "./transformHandles";
 import type {
@@ -40,17 +46,30 @@ import type {
 export const redrawTextBoundingBox = (
   textElement: ExcalidrawTextElement,
   container: ExcalidrawElement | null,
-  elementsMap: ElementsMap,
-  informMutation = true,
+  scene: Scene,
 ) => {
+  const elementsMap = scene.getNonDeletedElementsMap();
+
   let maxWidth = undefined;
+
+  if (!isProdEnv()) {
+    invariant(
+      !container || !isArrowElement(container) || textElement.angle === 0,
+      "text element angle must be 0 if bound to arrow container",
+    );
+  }
+
   const boundTextUpdates = {
     x: textElement.x,
     y: textElement.y,
     text: textElement.text,
     width: textElement.width,
     height: textElement.height,
-    angle: container?.angle ?? textElement.angle,
+    angle: (container
+      ? isArrowElement(container)
+        ? 0
+        : container.angle
+      : textElement.angle) as Radians,
   };
 
   boundTextUpdates.text = textElement.text;
@@ -90,38 +109,43 @@ export const redrawTextBoundingBox = (
         metrics.height,
         container.type,
       );
-      mutateElement(container, { height: nextHeight }, informMutation);
+      scene.mutateElement(container, { height: nextHeight });
       updateOriginalContainerCache(container.id, nextHeight);
     }
+
     if (metrics.width > maxContainerWidth) {
       const nextWidth = computeContainerDimensionForBoundText(
         metrics.width,
         container.type,
       );
-      mutateElement(container, { width: nextWidth }, informMutation);
+      scene.mutateElement(container, { width: nextWidth });
     }
+
     const updatedTextElement = {
       ...textElement,
       ...boundTextUpdates,
     } as ExcalidrawTextElementWithContainer;
+
     const { x, y } = computeBoundTextPosition(
       container,
       updatedTextElement,
       elementsMap,
     );
+
     boundTextUpdates.x = x;
     boundTextUpdates.y = y;
   }
 
-  mutateElement(textElement, boundTextUpdates, informMutation);
+  scene.mutateElement(textElement, boundTextUpdates);
 };
 
 export const handleBindTextResize = (
   container: NonDeletedExcalidrawElement,
-  elementsMap: ElementsMap,
+  scene: Scene,
   transformHandleType: MaybeTransformHandleType,
   shouldMaintainAspectRatio = false,
 ) => {
+  const elementsMap = scene.getNonDeletedElementsMap();
   const boundTextElementId = getBoundTextElementId(container);
   if (!boundTextElementId) {
     return;
@@ -174,20 +198,20 @@ export const handleBindTextResize = (
           transformHandleType === "n")
           ? container.y - diff
           : container.y;
-      mutateElement(container, {
+      scene.mutateElement(container, {
         height: containerHeight,
         y: updatedY,
       });
     }
 
-    mutateElement(textElement, {
+    scene.mutateElement(textElement, {
       text,
       width: nextWidth,
       height: nextHeight,
     });
 
     if (!isArrowElement(container)) {
-      mutateElement(
+      scene.mutateElement(
         textElement,
         computeBoundTextPosition(container, textElement, elementsMap),
       );
@@ -230,6 +254,26 @@ export const computeBoundTextPosition = (
     x =
       containerCoords.x + (maxContainerWidth / 2 - boundTextElement.width / 2);
   }
+  const angle = (container.angle ?? 0) as Radians;
+
+  if (angle !== 0) {
+    const contentCenter = pointFrom(
+      containerCoords.x + maxContainerWidth / 2,
+      containerCoords.y + maxContainerHeight / 2,
+    );
+    const textCenter = pointFrom(
+      x + boundTextElement.width / 2,
+      y + boundTextElement.height / 2,
+    );
+
+    const [rx, ry] = pointRotateRads(textCenter, contentCenter, angle);
+
+    return {
+      x: rx - boundTextElement.width / 2,
+      y: ry - boundTextElement.height / 2,
+    };
+  }
+
   return { x, y };
 };
 
@@ -302,10 +346,7 @@ export const getContainerCenter = (
   if (!midSegmentMidpoint) {
     midSegmentMidpoint = LinearElementEditor.getSegmentMidPoint(
       container,
-      points[index],
-      points[index + 1],
       index + 1,
-      elementsMap,
     );
   }
   return { x: midSegmentMidpoint[0], y: midSegmentMidpoint[1] };
@@ -335,7 +376,10 @@ export const getTextElementAngle = (
   textElement: ExcalidrawTextElement,
   container: ExcalidrawTextContainer | null,
 ) => {
-  if (!container || isArrowElement(container)) {
+  if (isArrowElement(container)) {
+    return 0;
+  }
+  if (!container) {
     return textElement.angle;
   }
   return container.angle;

@@ -1,4 +1,8 @@
-import { MAX_CUSTOM_COLORS_USED_IN_CANVAS } from "@excalidraw/common";
+import {
+  isTransparent,
+  MAX_CUSTOM_COLORS_USED_IN_CANVAS,
+  tinycolor,
+} from "@excalidraw/common";
 
 import type { ExcalidrawElement } from "@excalidraw/element/types";
 
@@ -11,11 +15,14 @@ export const getColorNameAndShadeFromColor = ({
   color,
 }: {
   palette: ColorPaletteCustom;
-  color: string;
+  color: string | null;
 }): {
   colorName: ColorPickerColor;
   shade: number | null;
 } | null => {
+  if (!color) {
+    return null;
+  }
   for (const [colorName, colorVal] of Object.entries(palette)) {
     if (Array.isArray(colorVal)) {
       const shade = colorVal.indexOf(color);
@@ -93,41 +100,30 @@ export type ActiveColorPickerSectionAtomType =
 export const activeColorPickerSectionAtom =
   atom<ActiveColorPickerSectionAtomType>(null);
 
-const calculateContrast = (r: number, g: number, b: number) => {
+const calculateContrast = (r: number, g: number, b: number): number => {
   const yiq = (r * 299 + g * 587 + b * 114) / 1000;
-  return yiq >= 160 ? "black" : "white";
+  return yiq;
 };
 
-// inspiration from https://stackoverflow.com/a/11868398
-export const getContrastYIQ = (bgHex: string, isCustomColor: boolean) => {
-  if (isCustomColor) {
-    const style = new Option().style;
-    style.color = bgHex;
-
-    if (style.color) {
-      const rgb = style.color
-        .replace(/^(rgb|rgba)\(/, "")
-        .replace(/\)$/, "")
-        .replace(/\s/g, "")
-        .split(",");
-      const r = parseInt(rgb[0]);
-      const g = parseInt(rgb[1]);
-      const b = parseInt(rgb[2]);
-
-      return calculateContrast(r, g, b);
-    }
+// YIQ algo, inspiration from https://stackoverflow.com/a/11868398
+export const isColorDark = (color: string, threshold = 160): boolean => {
+  // no color ("") -> assume it default to black
+  if (!color) {
+    return true;
   }
 
-  // TODO: ? is this wanted?
-  if (bgHex === "transparent") {
-    return "black";
+  if (isTransparent(color)) {
+    return false;
   }
 
-  const r = parseInt(bgHex.substring(1, 3), 16);
-  const g = parseInt(bgHex.substring(3, 5), 16);
-  const b = parseInt(bgHex.substring(5, 7), 16);
+  const tc = tinycolor(color);
+  if (!tc.isValid()) {
+    // invalid color -> assume it defaults to black
+    return true;
+  }
 
-  return calculateContrast(r, g, b);
+  const { r, g, b } = tc.toRgb();
+  return calculateContrast(r, g, b) < threshold;
 };
 
 export type ColorPickerType =

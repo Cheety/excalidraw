@@ -6,43 +6,40 @@ import {
   FONT_FAMILY,
   SVG_NS,
   THEME,
-  THEME_FILTER,
   MIME_TYPES,
   EXPORT_DATA_TYPES,
   arrayToMap,
   distance,
   getFontString,
   toBrandedType,
+  applyDarkModeFilter,
 } from "@excalidraw/common";
 
-import {
-  getCommonBounds,
-  getElementAbsoluteCoords,
-} from "@excalidraw/element/bounds";
+import { getCommonBounds, getElementAbsoluteCoords } from "@excalidraw/element";
 
 import {
   getInitializedImageElements,
   updateImageCache,
-} from "@excalidraw/element/image";
+} from "@excalidraw/element";
 
-import { newElementWith } from "@excalidraw/element/mutateElement";
+import { newElementWith } from "@excalidraw/element";
 
-import { isFrameLikeElement } from "@excalidraw/element/typeChecks";
+import { isFrameLikeElement } from "@excalidraw/element";
 
 import {
   getElementsOverlappingFrame,
   getFrameLikeElements,
   getFrameLikeTitle,
   getRootElements,
-} from "@excalidraw/element/frame";
+} from "@excalidraw/element";
 
-import { syncInvalidIndices } from "@excalidraw/element/fractionalIndex";
+import { syncInvalidIndices } from "@excalidraw/element";
 
 import { type Mutable } from "@excalidraw/common/utility-types";
 
-import { newTextElement } from "@excalidraw/element/newElement";
+import { newTextElement } from "@excalidraw/element";
 
-import type { Bounds } from "@excalidraw/element/bounds";
+import type { Bounds } from "@excalidraw/common";
 
 import type {
   ExcalidrawElement,
@@ -271,6 +268,7 @@ export const exportToCanvas = async (
       embedsValidationStatus: new Map(),
       elementsPendingErasure: new Set(),
       pendingFlowchartNodes: null,
+      theme: appState.exportWithDarkMode ? THEME.DARK : THEME.LIGHT,
     },
   });
 
@@ -351,9 +349,6 @@ export const exportToSvg = async (
   svgRoot.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svgRoot.setAttribute("width", `${width * exportScale}`);
   svgRoot.setAttribute("height", `${height * exportScale}`);
-  if (exportWithDarkMode) {
-    svgRoot.setAttribute("filter", THEME_FILTER);
-  }
 
   const defsElement = svgRoot.ownerDocument.createElementNS(SVG_NS, "defs");
 
@@ -458,7 +453,12 @@ export const exportToSvg = async (
     rect.setAttribute("y", "0");
     rect.setAttribute("width", `${width}`);
     rect.setAttribute("height", `${height}`);
-    rect.setAttribute("fill", viewBackgroundColor);
+    rect.setAttribute(
+      "fill",
+      exportWithDarkMode
+        ? applyDarkModeFilter(viewBackgroundColor)
+        : viewBackgroundColor,
+    );
     svgRoot.appendChild(rect);
   }
 
@@ -492,6 +492,7 @@ export const exportToSvg = async (
           )
         : new Map(),
       reuseImages: opts?.reuseImages ?? true,
+      theme: exportWithDarkMode ? THEME.DARK : THEME.LIGHT,
     },
   );
 

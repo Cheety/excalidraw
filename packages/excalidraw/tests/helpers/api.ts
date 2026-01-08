@@ -6,7 +6,6 @@ import { pointFrom, type LocalPoint, type Radians } from "@excalidraw/math";
 
 import { DEFAULT_VERTICAL_ALIGN, ROUNDNESS, assertNever } from "@excalidraw/common";
 
-import { mutateElement } from "@excalidraw/element/mutateElement";
 import {
   newArrowElement,
   newElement,
@@ -18,11 +17,13 @@ import {
   newLinearElement,
   newMagicFrameElement,
   newTextElement,
-} from "@excalidraw/element/newElement";
+} from "@excalidraw/element";
 
-import { isLinearElementType } from "@excalidraw/element/typeChecks";
-import { getSelectedElements } from "@excalidraw/element/selection";
-import { selectGroupsForSelectedElements } from "@excalidraw/element/groups";
+import { isLinearElementType } from "@excalidraw/element";
+import { getSelectedElements } from "@excalidraw/element";
+import { selectGroupsForSelectedElements } from "@excalidraw/element";
+
+import { FONT_SIZES } from "@excalidraw/common";
 
 import type {
   ExcalidrawElement,
@@ -100,10 +101,10 @@ export class API {
 
   // eslint-disable-next-line prettier/prettier
   static updateElement = <T extends ExcalidrawElement>(
-    ...args: Parameters<typeof mutateElement<T>>
+    ...args: Parameters<typeof h.app.scene.mutateElement<T>>
   ) => {
     act(() => {
-      mutateElement<T>(...args);
+      h.app.scene.mutateElement(...args);
     });
   };
 
@@ -407,7 +408,7 @@ export class API {
       text: opts?.label?.text || "sample-text",
       width: 50,
       height: 20,
-      fontSize: 16,
+      fontSize: FONT_SIZES.sm,
       containerId: rectangle.id,
       frameId:
         opts?.label?.frameId === undefined
@@ -419,12 +420,11 @@ export class API {
 
     });
 
-    mutateElement(
+    h.app.scene.mutateElement(
       rectangle,
       {
         boundElements: [{ type: "text", id: text.id }],
       },
-      false,
     );
 
     return [rectangle, text];
@@ -444,7 +444,6 @@ export class API {
 
     const text = API.createElement({
       type: "text",
-      id: "text2",
       width: 50,
       height: 20,
       containerId: arrow.id,
@@ -454,12 +453,11 @@ export class API {
           : opts?.label?.frameId ?? null,
     });
 
-    mutateElement(
+    h.app.scene.mutateElement(
       arrow,
       {
         boundElements: [{ type: "text", id: text.id }],
       },
-      false,
     );
 
     return [arrow, text];
@@ -468,7 +466,7 @@ export class API {
   static readFile = async <T extends "utf8" | null>(
     filepath: string,
     encoding?: T,
-  ): Promise<T extends "utf8" ? string : Buffer> => {
+  ): Promise<T extends "utf8" ? string : ArrayBuffer> => {
     filepath = path.isAbsolute(filepath)
       ? filepath
       : path.resolve(path.join(__dirname, "../", filepath));
@@ -482,34 +480,52 @@ export class API {
     });
   };
 
-  static drop = async (blob: Blob) => {
-    const fileDropEvent = createEvent.drop(GlobalTestState.interactiveCanvas);
-    const text = await new Promise<string>((resolve, reject) => {
-      try {
-        const reader = new FileReader();
-        reader.onload = () => {
-          resolve(reader.result as string);
-        };
-        reader.readAsText(blob);
-      } catch (error: any) {
-        reject(error);
-      }
-    });
+  static drop = async (items: ({kind: "string", value: string, type: string} | {kind: "file", file: File | Blob, type?: string })[]) => {
 
-    const files = [blob] as File[] & { item: (index: number) => File };
+    const fileDropEvent = createEvent.drop(GlobalTestState.interactiveCanvas);
+
+    const dataTransferFileItems = items.filter(i => i.kind === "file") as {kind: "file", file: File | Blob, type: string }[];
+
+    const files = dataTransferFileItems.map(item => item.file) as File[] & { item: (index: number) => File };
+    // https://developer.mozilla.org/en-US/docs/Web/API/FileList/item
     files.item = (index: number) => files[index];
 
     Object.defineProperty(fileDropEvent, "dataTransfer", {
       value: {
+        // https://developer.mozilla.org/en-US/docs/Web/API/DataTransfer/files
         files,
-        getData: (type: string) => {
-          if (type === blob.type) {
-            return text;
+        // https://developer.mozilla.org/en-US/docs/Web/API/DataTransfer/items
+        items: items.map((item, idx) => {
+          if (item.kind === "string")  {
+            return {
+              kind: "string",
+              type: item.type,
+              // https://developer.mozilla.org/en-US/docs/Web/API/DataTransferItem/getAsString
+              getAsString: (cb: (text: string) => any) => cb(item.value),
+            };
           }
-          return "";
+          return {
+            kind: "file",
+            type: item.type || item.file.type,
+            // https://developer.mozilla.org/en-US/docs/Web/API/DataTransferItem/getAsFile
+            getAsFile: () => item.file,
+          };
+        }),
+        // https://developer.mozilla.org/en-US/docs/Web/API/DataTransfer/getData
+        getData: (type: string) => {
+          return items.find((item) => item.type === "string" && item.type === type) || "";
         },
+        // https://developer.mozilla.org/en-US/docs/Web/API/DataTransfer/types
+        types: Array.from(new Set(items.map((item) => item.kind === "file" ? "Files" : item.type))),
       },
     });
+    Object.defineProperty(fileDropEvent, "clientX", {
+      value: 0,
+    });
+    Object.defineProperty(fileDropEvent, "clientY", {
+      value: 0,
+    });
+
     await fireEvent(GlobalTestState.interactiveCanvas, fileDropEvent);
   };
 

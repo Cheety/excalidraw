@@ -25,6 +25,8 @@ import { getBoundTextMaxWidth } from "./textElement";
 import { normalizeText, measureText } from "./textMeasurements";
 import { wrapText } from "./textWrapping";
 
+import { isLineElement } from "./typeChecks";
+
 import type {
   ExcalidrawElement,
   ExcalidrawImageElement,
@@ -44,8 +46,8 @@ import type {
   ExcalidrawIframeElement,
   ElementsMap,
   ExcalidrawArrowElement,
-  FixedSegment,
   ExcalidrawElbowArrowElement,
+  ExcalidrawLineElement,
 } from "./types";
 
 export type ElementConstructorOpts = MarkOptional<
@@ -450,7 +452,6 @@ export const newFreeDrawElement = (
     points: opts.points || [],
     pressures: opts.pressures || [],
     simulatePressure: opts.simulatePressure,
-    lastCommittedPoint: null,
   };
 };
 
@@ -458,17 +459,29 @@ export const newLinearElement = (
   opts: {
     type: ExcalidrawLinearElement["type"];
     points?: ExcalidrawLinearElement["points"];
+    polygon?: ExcalidrawLineElement["polygon"];
   } & ElementConstructorOpts,
 ): NonDeleted<ExcalidrawLinearElement> => {
-  return {
+  const element = {
     ..._newElementBase<ExcalidrawLinearElement>(opts.type, opts),
     points: opts.points || [],
-    lastCommittedPoint: null,
+
     startBinding: null,
     endBinding: null,
     startArrowhead: null,
     endArrowhead: null,
   };
+
+  if (isLineElement(element)) {
+    const lineElement: NonDeleted<ExcalidrawLineElement> = {
+      ...element,
+      polygon: opts.polygon ?? false,
+    };
+
+    return lineElement;
+  }
+
+  return element;
 };
 
 export const newArrowElement = <T extends boolean>(
@@ -478,7 +491,7 @@ export const newArrowElement = <T extends boolean>(
     endArrowhead?: Arrowhead | null;
     points?: ExcalidrawArrowElement["points"];
     elbowed?: T;
-    fixedSegments?: FixedSegment[] | null;
+    fixedSegments?: ExcalidrawElbowArrowElement["fixedSegments"] | null;
   } & ElementConstructorOpts,
 ): T extends true
   ? NonDeleted<ExcalidrawElbowArrowElement>
@@ -487,7 +500,6 @@ export const newArrowElement = <T extends boolean>(
     return {
       ..._newElementBase<ExcalidrawElbowArrowElement>(opts.type, opts),
       points: opts.points || [],
-      lastCommittedPoint: null,
       startBinding: null,
       endBinding: null,
       startArrowhead: opts.startArrowhead || null,
@@ -502,7 +514,6 @@ export const newArrowElement = <T extends boolean>(
   return {
     ..._newElementBase<ExcalidrawArrowElement>(opts.type, opts),
     points: opts.points || [],
-    lastCommittedPoint: null,
     startBinding: null,
     endBinding: null,
     startArrowhead: opts.startArrowhead || null,

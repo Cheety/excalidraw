@@ -4,10 +4,11 @@ import {
   CJK_HAND_DRAWN_FALLBACK_FONT,
   WINDOWS_EMOJI_FALLBACK_FONT,
   getFontFamilyFallbacks,
+  FONT_SIZES,
 } from "@excalidraw/common";
-import { getContainerElement } from "@excalidraw/element/textElement";
-import { charWidth } from "@excalidraw/element/textMeasurements";
-import { containsCJK } from "@excalidraw/element/textWrapping";
+import { getContainerElement } from "@excalidraw/element";
+import { charWidth } from "@excalidraw/element";
+import { containsCJK } from "@excalidraw/element";
 
 import {
   FONT_METADATA,
@@ -17,9 +18,9 @@ import {
   promiseTry,
 } from "@excalidraw/common";
 
-import { ShapeCache } from "@excalidraw/element/ShapeCache";
+import { ShapeCache } from "@excalidraw/element";
 
-import { isTextElement } from "@excalidraw/element/typeChecks";
+import { isTextElement } from "@excalidraw/element";
 
 import type {
   ExcalidrawElement,
@@ -27,6 +28,8 @@ import type {
 } from "@excalidraw/element/types";
 
 import type { ValueOf } from "@excalidraw/common/utility-types";
+
+import type { Scene } from "@excalidraw/element";
 
 import { CascadiaFontFaces } from "./Cascadia";
 import { ComicShannsFontFaces } from "./ComicShanns";
@@ -39,8 +42,6 @@ import { LilitaFontFaces } from "./Lilita";
 import { NunitoFontFaces } from "./Nunito";
 import { VirgilFontFaces } from "./Virgil";
 import { XiaolaiFontFaces } from "./Xiaolai";
-
-import type Scene from "../scene/Scene";
 
 export class Fonts {
   // it's ok to track fonts across multiple instances only once, so let's use
@@ -240,7 +241,7 @@ export class Fonts {
     for (const [index, fontFamily] of fontFamilies.entries()) {
       const font = getFontString({
         fontFamily,
-        fontSize: 16,
+        fontSize: FONT_SIZES.sm,
       });
 
       // WARN: without "text" param it does not have to mean that all font faces are loaded as it could be just one irrelevant font face!

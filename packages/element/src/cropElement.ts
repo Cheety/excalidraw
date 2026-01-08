@@ -15,6 +15,7 @@ import {
 import { type Point } from "points-on-curve";
 
 import {
+  elementCenterPoint,
   getElementAbsoluteCoords,
   getResizedElementAbsoluteCoords,
 } from "./bounds";
@@ -32,6 +33,7 @@ export const MINIMAL_CROP_SIZE = 10;
 
 export const cropElement = (
   element: ExcalidrawImageElement,
+  elementsMap: ElementsMap,
   transformHandle: TransformHandleType,
   naturalWidth: number,
   naturalHeight: number,
@@ -61,7 +63,7 @@ export const cropElement = (
 
   const rotatedPointer = pointRotateRads(
     pointFrom(pointerX, pointerY),
-    pointFrom(element.x + element.width / 2, element.y + element.height / 2),
+    elementCenterPoint(element, elementsMap),
     -element.angle as Radians,
   );
 

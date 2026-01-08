@@ -1,4 +1,5 @@
 export * from "./binary-heap";
+export * from "./bounds";
 export * from "./colors";
 export * from "./constants";
 export * from "./font-metadata";
@@ -9,3 +10,6 @@ export * from "./promise-pool";
 export * from "./random";
 export * from "./url";
 export * from "./utils";
+export * from "./emitter";
+export * from "./visualdebug";
+export * from "./editorInterface";

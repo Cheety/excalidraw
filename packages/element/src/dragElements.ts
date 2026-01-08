@@ -1,7 +1,9 @@
 import {
+  type Bounds,
   TEXT_AUTOWRAP_THRESHOLD,
   getGridPoint,
   getFontString,
+  DRAGGING_THRESHOLD,
 } from "@excalidraw/common";
 
 import type {
@@ -11,13 +13,10 @@ import type {
   PointerDownState,
 } from "@excalidraw/excalidraw/types";
 
-import type Scene from "@excalidraw/excalidraw/scene/Scene";
-
 import type { NonDeletedExcalidrawElement } from "@excalidraw/element/types";
 
-import { updateBoundElements } from "./binding";
+import { unbindBindingElement, updateBoundElements } from "./binding";
 import { getCommonBounds } from "./bounds";
-import { mutateElement } from "./mutateElement";
 import { getPerfectElementSize } from "./sizeHelpers";
 import { getBoundTextElement } from "./textElement";
 import { getMinTextElementWidth } from "./textMeasurements";
@@ -29,7 +28,8 @@ import {
   isTextElement,
 } from "./typeChecks";
 
-import type { Bounds } from "./bounds";
+import type { Scene } from "./Scene";
+
 import type { ExcalidrawElement } from "./types";
 
 export const dragSelectedElements = (
@@ -103,20 +103,69 @@ export const dragSelectedElements = (
     gridSize,
   );
 
+  const elementsToUpdateIds = new Set(
+    Array.from(elementsToUpdate, (el) => el.id),
+  );
+
   elementsToUpdate.forEach((element) => {
-    updateElementCoords(pointerDownState, element, adjustedOffset);
+    const isArrow = !isArrowElement(element);
+    const isStartBoundElementSelected =
+      isArrow ||
+      (element.startBinding
+        ? elementsToUpdateIds.has(element.startBinding.elementId)
+        : false);
+    const isEndBoundElementSelected =
+      isArrow ||
+      (element.endBinding
+        ? elementsToUpdateIds.has(element.endBinding.elementId)
+        : false);
+
     if (!isArrowElement(element)) {
+      updateElementCoords(pointerDownState, element, scene, adjustedOffset);
+
       // skip arrow labels since we calculate its position during render
       const textElement = getBoundTextElement(
         element,
         scene.getNonDeletedElementsMap(),
       );
       if (textElement) {
-        updateElementCoords(pointerDownState, textElement, adjustedOffset);
+        updateElementCoords(
+          pointerDownState,
+          textElement,
+          scene,
+          adjustedOffset,
+        );
       }
-      updateBoundElements(element, scene.getElementsMapIncludingDeleted(), {
+      updateBoundElements(element, scene, {
         simultaneouslyUpdated: Array.from(elementsToUpdate),
       });
+    } else if (
+      // NOTE: Add a little initial drag to the arrow dragging when the arrow
+      // is the single element being dragged to avoid accidentally unbinding
+      // the arrow when the user just wants to select it.
+
+      elementsToUpdate.size > 1 ||
+      Math.max(Math.abs(adjustedOffset.x), Math.abs(adjustedOffset.y)) >
+        DRAGGING_THRESHOLD ||
+      (!element.startBinding && !element.endBinding)
+    ) {
+      updateElementCoords(pointerDownState, element, scene, adjustedOffset);
+
+      const shouldUnbindStart =
+        element.startBinding && !isStartBoundElementSelected;
+      const shouldUnbindEnd = element.endBinding && !isEndBoundElementSelected;
+      if (shouldUnbindStart || shouldUnbindEnd) {
+        // NOTE: Moving the bound arrow should unbind it, otherwise we would
+        // have weird situations, like 0 lenght arrow when the user moves
+        // the arrow outside a filled shape suddenly forcing the arrow start
+        // and end point to jump "outside" the shape.
+        if (shouldUnbindStart) {
+          unbindBindingElement(element, "start", scene);
+        }
+        if (shouldUnbindEnd) {
+          unbindBindingElement(element, "end", scene);
+        }
+      }
     }
   });
 };
@@ -155,6 +204,7 @@ const calculateOffset = (
 const updateElementCoords = (
   pointerDownState: PointerDownState,
   element: NonDeletedExcalidrawElement,
+  scene: Scene,
   dragOffset: { x: number; y: number },
 ) => {
   const originalElement =
@@ -163,7 +213,7 @@ const updateElementCoords = (
   const nextX = originalElement.x + dragOffset.x;
   const nextY = originalElement.y + dragOffset.y;
 
-  mutateElement(element, {
+  scene.mutateElement(element, {
     x: nextX,
     y: nextY,
   });
@@ -190,6 +240,7 @@ export const dragNewElement = ({
   shouldMaintainAspectRatio,
   shouldResizeFromCenter,
   zoom,
+  scene,
   widthAspectRatio = null,
   originOffset = null,
   informMutation = true,
@@ -205,6 +256,7 @@ export const dragNewElement = ({
   shouldMaintainAspectRatio: boolean;
   shouldResizeFromCenter: boolean;
   zoom: NormalizedZoomValue;
+  scene: Scene;
   /** whether to keep given aspect ratio when `isResizeWithSidesSameLength` is
       true */
   widthAspectRatio?: number | null;
@@ -285,7 +337,7 @@ export const dragNewElement = ({
       };
     }
 
-    mutateElement(
+    scene.mutateElement(
       newElement,
       {
         x: newX + (originOffset?.x ?? 0),
@@ -295,7 +347,7 @@ export const dragNewElement = ({
         ...textAutoResize,
         ...imageInitialDimension,
       },
-      informMutation,
+      { informMutation, isDragging: false },
     );
   }
 };

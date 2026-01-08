@@ -9,13 +9,14 @@ import {
   VERTICAL_ALIGN,
   randomId,
   isDevEnv,
+  FONT_SIZES,
 } from "@excalidraw/common";
 
 import {
   newTextElement,
   newLinearElement,
   newElement,
-} from "@excalidraw/element/newElement";
+} from "@excalidraw/element";
 
 import type { Radians } from "@excalidraw/math";
 
@@ -213,7 +214,7 @@ const chartXLabels = (
         y: y + BAR_GAP / 2,
         width: BAR_WIDTH,
         angle: 5.87 as Radians,
-        fontSize: 16,
+        fontSize: FONT_SIZES.sm,
         textAlign: "center",
         verticalAlign: "top",
       });

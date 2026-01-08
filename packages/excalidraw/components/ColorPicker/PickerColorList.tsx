@@ -17,21 +17,21 @@ import type { TranslationKeys } from "../../i18n";
 
 interface PickerColorListProps {
   palette: ColorPaletteCustom;
-  color: string;
+  color: string | null;
   onChange: (color: string) => void;
-  label: string;
   activeShade: number;
+  showHotKey?: boolean;
 }
 
 const PickerColorList = ({
   palette,
   color,
   onChange,
-  label,
   activeShade,
+  showHotKey = true,
 }: PickerColorListProps) => {
   const colorObj = getColorNameAndShadeFromColor({
-    color: color || "transparent",
+    color,
     palette,
   });
   const [activeColorPickerSection, setActiveColorPickerSection] = useAtom(
@@ -65,7 +65,7 @@ const PickerColorList = ({
             tabIndex={-1}
             type="button"
             className={clsx(
-              "color-picker__button color-picker__button--large",
+              "color-picker__button color-picker__button--large has-outline",
               {
                 active: colorObj?.colorName === key,
                 "is-transparent": color === "transparent" || !color,
@@ -84,7 +84,7 @@ const PickerColorList = ({
             key={key}
           >
             <div className="color-picker__button-outline" />
-            <HotkeyLabel color={color} keyLabel={keybinding} />
+            {showHotKey && <HotkeyLabel color={color} keyLabel={keybinding} />}
           </button>
         );
       })}

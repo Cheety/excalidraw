@@ -3,7 +3,7 @@ import { getShortcutFromShortcutName } from "../../actions/shortcuts";
 import { useTunnels } from "../../context/tunnels";
 import { useUIAppState } from "../../context/ui-appState";
 import { t, useI18n } from "../../i18n";
-import { useDevice, useExcalidrawActionManager } from "../App";
+import { useEditorInterface, useExcalidrawActionManager } from "../App";
 import { ExcalidrawLogo } from "../ExcalidrawLogo";
 import { HelpIcon, LoadIcon, usersIcon } from "../icons";
 
@@ -18,12 +18,12 @@ const WelcomeScreenMenuItemContent = ({
   shortcut?: string | null;
   children: React.ReactNode;
 }) => {
-  const device = useDevice();
+  const editorInterface = useEditorInterface();
   return (
     <>
       <div className="welcome-screen-menu-item__icon">{icon}</div>
       <div className="welcome-screen-menu-item__text">{children}</div>
-      {shortcut && !device.editor.isMobile && (
+      {shortcut && editorInterface.formFactor !== "phone" && (
         <div className="welcome-screen-menu-item__shortcut">{shortcut}</div>
       )}
     </>
@@ -78,7 +78,7 @@ const WelcomeScreenMenuItemLink = ({
       className={`welcome-screen-menu-item ${className}`}
       href={href}
       target="_blank"
-      rel="noreferrer"
+      rel="noopener"
     >
       <WelcomeScreenMenuItemContent icon={icon} shortcut={shortcut}>
         {children}

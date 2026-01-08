@@ -160,16 +160,36 @@ export const distanceToLineSegment = <Point extends LocalPoint | GlobalPoint>(
  */
 export function lineSegmentIntersectionPoints<
   Point extends GlobalPoint | LocalPoint,
->(l: LineSegment<Point>, s: LineSegment<Point>): Point | null {
+>(
+  l: LineSegment<Point>,
+  s: LineSegment<Point>,
+  threshold?: number,
+): Point | null {
   const candidate = linesIntersectAt(line(l[0], l[1]), line(s[0], s[1]));
 
   if (
     !candidate ||
-    !pointOnLineSegment(candidate, s) ||
-    !pointOnLineSegment(candidate, l)
+    !pointOnLineSegment(candidate, s, threshold) ||
+    !pointOnLineSegment(candidate, l, threshold)
   ) {
     return null;
   }
 
   return candidate;
+}
+
+export function lineSegmentsDistance<Point extends GlobalPoint | LocalPoint>(
+  s1: LineSegment<Point>,
+  s2: LineSegment<Point>,
+): number {
+  if (lineSegmentIntersectionPoints(s1, s2)) {
+    return 0;
+  }
+
+  return Math.min(
+    distanceToLineSegment(s1[0], s2),
+    distanceToLineSegment(s1[1], s2),
+    distanceToLineSegment(s2[0], s1),
+    distanceToLineSegment(s2[1], s1),
+  );
 }
