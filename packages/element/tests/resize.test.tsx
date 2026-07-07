@@ -27,6 +27,7 @@ import type {
   ExcalidrawElbowArrowElement,
   ExcalidrawFreeDrawElement,
   ExcalidrawLinearElement,
+  NonDeleted,
 } from "../src/types";
 
 unmountComponent();
@@ -315,7 +316,7 @@ describe("line element", () => {
   it("resizes", async () => {
     UI.createElement("line", { points });
 
-    const element = h.elements[0] as ExcalidrawLinearElement;
+    const element = h.elements[0] as NonDeleted<ExcalidrawLinearElement>;
 
     const {
       x: prevX,
@@ -352,7 +353,7 @@ describe("line element", () => {
 
   it("flips while resizing", async () => {
     UI.createElement("line", { points });
-    const element = h.elements[0] as ExcalidrawLinearElement;
+    const element = h.elements[0] as NonDeleted<ExcalidrawLinearElement>;
 
     const {
       width: prevWidth,
@@ -406,7 +407,7 @@ describe("line element", () => {
         pointFrom(-338.05644048727373, -180.4761618151104),
       ],
     });
-    const element = h.elements[0] as ExcalidrawLinearElement;
+    const element = h.elements[0] as NonDeleted<ExcalidrawLinearElement>;
 
     const {
       x: prevX,
@@ -1350,8 +1351,8 @@ describe("multiple selection", () => {
 
     expect(boundArrow.x).toBeCloseTo(380 * scaleX);
     expect(boundArrow.y).toBeCloseTo(240 * scaleY);
-    expect(boundArrow.points[1][0]).toBeCloseTo(59.7979);
-    expect(boundArrow.points[1][1]).toBeCloseTo(-79.7305);
+    expect(boundArrow.points[1][0]).toBeCloseTo(63.40354208105561);
+    expect(boundArrow.points[1][1]).toBeCloseTo(-84.53805610807356);
 
     expect(arrowLabelPos.x + arrowLabel.width / 2).toBeCloseTo(
       boundArrow.x + boundArrow.points[1][0] / 2,

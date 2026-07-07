@@ -1,10 +1,11 @@
-import * as Popover from "@radix-ui/react-popover";
+import { Popover } from "radix-ui";
 import clsx from "clsx";
 import { useRef, useEffect } from "react";
 
 import {
   COLOR_OUTLINE_CONTRAST_THRESHOLD,
   COLOR_PALETTE,
+  isColorDark,
   isWritableElement,
 } from "@excalidraw/common";
 
@@ -29,13 +30,13 @@ import { ColorInput } from "./ColorInput";
 import { Picker } from "./Picker";
 import PickerHeading from "./PickerHeading";
 import { TopPicks } from "./TopPicks";
-import { activeColorPickerSectionAtom, isColorDark } from "./colorPickerUtils";
+import { activeColorPickerSectionAtom } from "./colorPickerUtils";
 
 import "./ColorPicker.scss";
 
 import type { ColorPickerType } from "./colorPickerUtils";
 
-import type { AppState } from "../../types";
+import type { AppState, UIAppState } from "../../types";
 
 interface ColorPickerProps {
   type: ColorPickerType;
@@ -47,7 +48,7 @@ interface ColorPickerProps {
   onChange: (color: string) => void;
   label: string;
   elements: readonly ExcalidrawElement[];
-  appState: AppState;
+  appState: UIAppState;
   palette?: ColorPaletteCustom | null;
   topPicks?: ColorTuple;
   updateData: (formData?: any) => void;
